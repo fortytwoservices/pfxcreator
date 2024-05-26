@@ -43,7 +43,7 @@ spec:
     spec:
       serviceAccountName: pfxcreator-sa
       containers:
-      - name: clientid-operator
+      - name: pfxoperator
         image: deggja/pfxcreator:latest
         args:
           - "--leader-elect=true"

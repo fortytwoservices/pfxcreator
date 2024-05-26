@@ -19,107 +19,111 @@ import (
 
 // SecretReconciler reconciles a Secret object
 type SecretReconciler struct {
-    client.Client
-    Log    logr.Logger
-    Scheme *runtime.Scheme
+	client.Client
+	Log    logr.Logger
+	Scheme *runtime.Scheme
 }
 
 func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-    log := r.Log.WithValues("secret", req.NamespacedName)
+	log := r.Log.WithValues("secret", req.NamespacedName)
 
-    // Fetch the Secret instance
-    secret := &corev1.Secret{}
-    err := r.Get(ctx, req.NamespacedName, secret)
-    if err != nil {
-        log.Error(err, "unable to fetch Secret")
-        return ctrl.Result{}, client.IgnoreNotFound(err)
-    }
+	log.Info("Attempting to fetch the Secret")
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, req.NamespacedName, secret)
+	if err != nil {
+		log.Error(err, "Failed to fetch the Secret")
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	log.Info("Secret fetched successfully")
 
-    // Check for the tls-combined.pem in the secret and decode it from Base64
-    combinedPEMBase64, ok := secret.Data["tls-combined.pem"]
-    if !ok {
-        log.Info("Secret does not contain 'tls-combined.pem'")
-        return ctrl.Result{}, nil
-    }
+	// Check if tls.pfx already exists
+	if _, exists := secret.Data["tls.pfx"]; exists {
+		log.Info("Secret already contains 'tls.pfx', skipping processing")
+		return ctrl.Result{}, nil
+	}
 
-    combinedPEM, err := base64.StdEncoding.DecodeString(string(combinedPEMBase64))
-    if err != nil {
-        log.Error(err, "Failed to decode base64 content of 'tls-combined.pem'")
-        return ctrl.Result{}, err
-    }
+	if combinedPEM, ok := secret.Data["tls-combined.pem"]; !ok {
+		log.Info("Secret does not contain 'tls-combined.pem'")
+		return ctrl.Result{}, nil
+	} else {
+		log.Info("Found 'tls-combined.pem'")
 
-    // Decode and parse the PEM file to get the certificate and private key
-    cert, key, err := decodePEM(combinedPEM)
-    if err != nil {
-        log.Error(err, "failed to decode PEM or parse components")
-        return ctrl.Result{}, err
-    }
+		cert, key, err := decodePEM(combinedPEM)
+		if err != nil {
+			log.Error(err, "Failed to decode PEM or parse components")
+			return ctrl.Result{}, err
+		}
+		log.Info("PEM decoded, and components parsed successfully")
 
-    // Generate the PKCS#12 file without a password
-    pfxData, err := pkcs12.Encode(rand.Reader, key, cert, nil, "")
-    if err != nil {
-        log.Error(err, "Failed to create PKCS#12 file")
-        return ctrl.Result{}, err
-    }
+		pfxData, err := pkcs12.Encode(rand.Reader, key, cert, nil, "")
+		if err != nil {
+			log.Error(err, "Failed to create PKCS#12 file")
+			return ctrl.Result{}, err
+		}
+		log.Info("PKCS#12 file created successfully")
 
-    // Update the secret with the new tls.pfx key
-    if secret.Data == nil {
-        secret.Data = make(map[string][]byte)
-    }
-    secret.Data["tls.pfx"] = pfxData
+		pfxDataBase64 := base64.StdEncoding.EncodeToString(pfxData)
+		log.Info("Encoded PKCS#12 data to base64 successfully")
 
-    err = r.Update(ctx, secret)
-    if err != nil {
-        log.Error(err, "Failed to update Secret with tls.pfx")
-        return ctrl.Result{}, err
-    }
+		if secret.Data == nil {
+			secret.Data = make(map[string][]byte)
+		}
+		secret.Data["tls.pfx"] = []byte(pfxDataBase64)
 
-    return ctrl.Result{}, nil
+		log.Info("Attempting to update the Secret with new tls.pfx")
+		if err = r.Update(ctx, secret); err != nil {
+			log.Error(err, "Failed to update Secret with tls.pfx")
+			return ctrl.Result{}, err
+		}
+		log.Info("Secret updated successfully with new tls.pfx")
+	}
+
+	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
-    r.Log = ctrl.Log.WithName("controllers").WithName("Secret")
+	r.Log = ctrl.Log.WithName("controllers").WithName("Secret")
 
-    // Define label selector
-    labelSelector := predicate.NewPredicateFuncs(func(obj client.Object) bool {
-        return obj.GetLabels()["pfxcreator"] == "true"
-    })
+	// Define label selector
+	labelSelector := predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		return obj.GetLabels()["pfxcreator"] == "true"
+	})
 
-    return ctrl.NewControllerManagedBy(mgr).
-        For(&corev1.Secret{}).
-        WithEventFilter(labelSelector).
-        Complete(r)
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&corev1.Secret{}).
+		WithEventFilter(labelSelector).
+		Complete(r)
 }
 
 func decodePEM(combinedPEM []byte) (*x509.Certificate, interface{}, error) {
-    var cert *x509.Certificate
-    var key interface{}
-    for {
-        block, rest := pem.Decode(combinedPEM)
-        if block == nil {
-            return nil, nil, fmt.Errorf("failed to parse PEM block")
-        }
-        switch block.Type {
-        case "CERTIFICATE":
-            cert, _ = x509.ParseCertificate(block.Bytes)
-        case "RSA PRIVATE KEY", "PRIVATE KEY":
-            var err error
-            key, err = x509.ParsePKCS1PrivateKey(block.Bytes)
-            if err != nil {
-                key, err = x509.ParsePKCS8PrivateKey(block.Bytes)
-                if err != nil {
-                    return nil, nil, fmt.Errorf("failed to parse private key: %v", err)
-                }
-            }
-        }
-        combinedPEM = rest
-        if len(rest) == 0 {
-            break
-        }
-    }
-    if cert == nil || key == nil {
-        return nil, nil, fmt.Errorf("certificate or key missing in PEM")
-    }
-    return cert, key, nil
+	var cert *x509.Certificate
+	var key interface{}
+	for {
+		block, rest := pem.Decode(combinedPEM)
+		if block == nil {
+			return nil, nil, fmt.Errorf("failed to parse PEM block")
+		}
+		switch block.Type {
+		case "CERTIFICATE":
+			cert, _ = x509.ParseCertificate(block.Bytes)
+		case "RSA PRIVATE KEY", "PRIVATE KEY":
+			var err error
+			key, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+			if err != nil {
+				key, err = x509.ParsePKCS8PrivateKey(block.Bytes)
+				if err != nil {
+					return nil, nil, fmt.Errorf("failed to parse private key: %v", err)
+				}
+			}
+		}
+		combinedPEM = rest
+		if len(rest) == 0 {
+			break
+		}
+	}
+	if cert == nil || key == nil {
+		return nil, nil, fmt.Errorf("certificate or key missing in PEM")
+	}
+	return cert, key, nil
 }
