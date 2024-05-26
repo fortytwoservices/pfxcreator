@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/deggja/clientid-operator/test/utils"
+	"github.com/fortytwoservices/pfxcreator/test/utils"
 )
 
 const namespace = "pfxcreator-system"

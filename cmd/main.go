@@ -34,7 +34,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	"github.com/deggja/pfxcreator/internal/controller"
+	"github.com/fortytwoservices/pfxcreator/internal/controller"
 	//+kubebuilder:scaffold:imports
 )
 
