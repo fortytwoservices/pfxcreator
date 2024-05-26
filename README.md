@@ -1,95 +1,23 @@
-# pfxcreator
-<<<<<<< HEAD
-Operator to create passwordless PFX for cert-manager CRDs
-=======
-// TODO(user): Add simple overview of use/purpose
+# PFX Creator
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+This operator takes the tls-combined.pem from a Cert-manager certificate and creates a passwordless PFX file for further use.
 
-## Getting Started
+# Why?
 
-### Prerequisites
-- go version v1.20.0+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+Cert-manager currently only supports creating pkcs12/pfx files with password protection. This solves that.
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+In addition to that, external secrets push secrets only supports pushing passwordless pkcs12/pfx certificate files.
 
-```sh
-make docker-build docker-push IMG=<some-registry>/pfxcreator:tag
-```
+# Prerequisites
 
-**NOTE:** This image ought to be published in the personal registry you specified. 
-And it is required to have access to pull the image from the working environment. 
-Make sure you have the proper permission to the registry if the above commands don’t work.
+The Kubernetes secret created by your Cert-manager certificate generation must have the following label for the operator to reconcile it:
 
-**Install the CRDs into the cluster:**
+```pfxcreator: "true"```
 
-```sh
-make install
-```
+# How to use
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+You need to use the ```additionalOutPutFormats``` with your cert-manager controller to output a tls-combined.pem key in your tls secrets after certificate generation.
 
-```sh
-make deploy IMG=<some-registry>/pfxcreator:tag
-```
+The operator will parse the combined PEM in your tls secret, as long as it has the correct label and create a passwordless PFX for you. That PFX will be added as a separate key, ```tls.pfx``` in the existing secret.
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin 
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
-```sh
-kubectl apply -k config/samples/
-```
-
->**NOTE**: Ensure that the samples has default values to test it out.
-
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
-
-```sh
-kubectl delete -k config/samples/
-```
-
-**Delete the APIs(CRDs) from the cluster:**
-
-```sh
-make uninstall
-```
-
-**UnDeploy the controller from the cluster:**
-
-```sh
-make undeploy
-```
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
-
-## License
-
-Copyright 2024.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
->>>>>>> 3bcdad9 (chore: initial commit)
+The new key can be pushed to your certificate store using PushSecret and the External Secrets Operator.
