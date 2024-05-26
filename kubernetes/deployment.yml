@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pfxcreator-sa
+  namespace: cert-manager
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pfxcreator-clusterrole
+rules:
+- apiGroups: ["*"]
+  resources: ["*"]
+  verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pfxcreator-clusterrolebinding
+subjects:
+- kind: ServiceAccount
+  name: pfxcreator-sa
+  namespace: cert-manager
+roleRef:
+  kind: ClusterRole
+  name: pfxcreator-clusterrole
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pfxcreator
+  namespace: cert-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: pfxcreator
+  template:
+    metadata:
+      labels:
+        name: pfxcreator
+    spec:
+      serviceAccountName: pfxcreator-sa
+      containers:
+      - name: clientid-operator
+        image: deggja/pfxcreator:latest
+        args:
+          - "--leader-elect=true"
+        imagePullPolicy: Always
+        resources:
+          limits:
+            cpu: 100m
+            memory: 100Mi
+          requests:
+            cpu: 100m
+            memory: 100Mi
