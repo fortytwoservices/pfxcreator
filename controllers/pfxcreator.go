@@ -54,7 +54,10 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 	defer os.Remove(pfxFile) // cleanup temp files
-	vaultName := "kv-atsaks-dv-azunea" // static definition of name, can use env variables later
+	vaultName := os.Getenv("KEY_VAULT_NAME") // get name from env variable KEY_VAULT_NAME
+	if vaultName == "" {
+		vaultName = "default-key-vault-name" // fallback to some value if not set
+	}
 	certName := fmt.Sprintf("%s-apim", req.NamespacedName.Name) // set secret name as cert name
 	if err := uploadToAzureKeyVault(ctx, pfxFile, vaultName, certName); err != nil {
 		log.Error(err, "Failed to upload certificate to Azure Key Vault")
