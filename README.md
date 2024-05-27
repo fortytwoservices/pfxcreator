@@ -18,6 +18,6 @@ The Kubernetes secret created by your Cert-manager certificate generation must h
 
 You need to use the ```additionalOutPutFormats``` with your cert-manager controller to output a tls-combined.pem key in your tls secrets after certificate generation.
 
-The operator will parse the combined PEM in your tls secret, as long as it has the correct label and create a passwordless PFX for you. That PFX will be added as a separate key, ```tls.pfx``` in the existing secret.
+The operator will parse the combined PEM in your tls secret, as long as it has the correct label and create a passwordless PFX for you.
 
-The new key can be pushed to your certificate store using PushSecret and the External Secrets Operator.
+Using the Azure SDK for Golang it will push the certificate to your key vault (this reference is currently hard coded but will be replaced with env variables soon) as the managed identity it is configured to run as.
