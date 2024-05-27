@@ -5,20 +5,25 @@ ARG TARGETARCH
 
 WORKDIR /workspace
 
-# Copy the entire project
-# Ensure that your .dockerignore file is configured to exclude unnecessary files
+# Copy the entire project and download dependencies
 COPY . .
-
-# Download dependencies - this uses the go.mod and go.sum files
 RUN go mod tidy && go mod download
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager ./cmd/main.go
 
-# Use distroless as minimal base image to package the manager binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:nonroot
+# Use Ubuntu as the base image
+FROM ubuntu:22.04
+RUN apt-get update && apt-get install -y openssl ca-certificates curl gnupg lsb-release
+# Install Azure CLI
+RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+
 WORKDIR /
+
+# Set a directory the non-root user can write to
+RUN mkdir /.azure && chown 65532:65532 /.azure
+ENV AZURE_CONFIG_DIR=/.azure
+
 COPY --from=builder /workspace/manager .
 USER 65532:65532
 

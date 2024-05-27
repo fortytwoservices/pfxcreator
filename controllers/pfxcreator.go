@@ -8,10 +8,11 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"os/exec"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/keyvault/azcertificates"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -20,7 +21,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-// SecretReconciler reconciles a Secret object
 type SecretReconciler struct {
 	client.Client
 	Log    logr.Logger
@@ -30,113 +30,115 @@ type SecretReconciler struct {
 func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := r.Log.WithValues("secret", req.NamespacedName)
 
-	log.Info("Attempting to fetch the Secret")
 	secret := &corev1.Secret{}
-	err := r.Get(ctx, req.NamespacedName, secret)
-	if err != nil {
+	if err := r.Get(ctx, req.NamespacedName, secret); err != nil {
 		log.Error(err, "Failed to fetch the Secret")
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	log.Info("Secret fetched successfully")
 
-	if _, exists := secret.Data["tls.pfx"]; exists {
-		log.Info("Secret already contains 'tls.pfx', skipping processing")
-		return ctrl.Result{}, nil
-	}
-
-	if combinedPEM, ok := secret.Data["tls-combined.pem"]; !ok {
+	if _, ok := secret.Data["tls-combined.pem"]; !ok {
 		log.Info("Secret does not contain 'tls-combined.pem'")
 		return ctrl.Result{}, nil
-	} else {
-		log.Info("Found 'tls-combined.pem'")
-
-		certs, key, err := decodePEM(combinedPEM)
-		if err != nil {
-			log.Error(err, "Failed to decode PEM or parse components")
-			return ctrl.Result{}, err
-		}
-		log.Info("PEM decoded, and components parsed successfully")
-
-		if err = createPKCS12(certs, key, "output.pfx"); err != nil {
-			log.Error(err, "Failed to create PKCS#12 file using OpenSSL")
-			return ctrl.Result{}, err
-		}
-
-		// Read and encode the PFX file
-		pfxData, err := ioutil.ReadFile("output.pfx")
-		if err != nil {
-			log.Error(err, "Failed to read the PFX file")
-			return ctrl.Result{}, err
-		}
-		pfxDataBase64 := base64.StdEncoding.EncodeToString(pfxData)
-
-		if secret.Data == nil {
-			secret.Data = make(map[string][]byte)
-		}
-		secret.Data["tls.pfx"] = []byte(pfxDataBase64)
-
-		log.Info("Attempting to update the Secret with new tls.pfx")
-		if err = r.Update(ctx, secret); err != nil {
-			log.Error(err, "Failed to update Secret with tls.pfx")
-			return ctrl.Result{}, err
-		}
-		log.Info("Secret updated successfully with new tls.pfx")
 	}
 
+	log.Info("Found 'tls-combined.pem'")
+	certs, key, err := decodePEM(secret.Data["tls-combined.pem"])
+	if err != nil {
+		log.Error(err, "Failed to decode PEM or parse components")
+		return ctrl.Result{}, err
+	}
+
+	pfxFile, err := createPKCS12(certs, key)
+	if err != nil {
+		log.Error(err, "Failed to create PKCS#12 file")
+		return ctrl.Result{}, err
+	}
+	defer os.Remove(pfxFile) // cleanup temp files
+	vaultName := "kv-atsaks-dv-azunea" // static definition of name, can use env variables later
+	certName := fmt.Sprintf("%s-apim", req.NamespacedName.Name) // set secret name as cert name
+	if err := uploadToAzureKeyVault(ctx, pfxFile, vaultName, certName); err != nil {
+		log.Error(err, "Failed to upload certificate to Azure Key Vault")
+		return ctrl.Result{}, err
+	}
+
+	log.Info("Certificate uploaded to Azure Key Vault successfully")
 	return ctrl.Result{}, nil
 }
 
-func createPKCS12(certs []*x509.Certificate, key interface{}, outputFileName string) error {
-	// Write the key and certificates to temporary files
+func createPKCS12(certs []*x509.Certificate, key interface{}) (string, error) {
 	keyFile, err := ioutil.TempFile("", "key-*.pem")
 	if err != nil {
-		return fmt.Errorf("failed to create temp file for key: %w", err)
+		return "", fmt.Errorf("failed to create temp file for key: %w", err)
 	}
-	defer os.Remove(keyFile.Name()) // Clean up file after return
-	defer keyFile.Close()
+	defer func() {
+		keyFile.Close()
+		os.Remove(keyFile.Name())
+	}()
 
 	certFile, err := ioutil.TempFile("", "cert-*.pem")
 	if err != nil {
-		return fmt.Errorf("failed to create temp file for cert: %w", err)
+		return "", fmt.Errorf("failed to create temp file for cert: %w", err)
 	}
-	defer os.Remove(certFile.Name()) // Clean up file after return
-	defer certFile.Close()
-
-	// Ensure the key file is written securely
-	if err := keyFile.Chmod(0600); err != nil {
-		return fmt.Errorf("failed to set key file permissions: %w", err)
-	}
+	defer func() {
+		certFile.Close()
+		os.Remove(certFile.Name())
+	}()
 
 	privateKey, ok := key.(*rsa.PrivateKey)
 	if !ok {
-		return fmt.Errorf("key is not of type *rsa.PrivateKey")
-	}
-	if err := pem.Encode(keyFile, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)}); err != nil {
-		return fmt.Errorf("failed to write key to PEM: %w", err)
+		return "", fmt.Errorf("key is not of type *rsa.PrivateKey")
 	}
 
-	// Encode all certificates in the chain to the cert file
+	if err := pem.Encode(keyFile, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)}); err != nil {
+		return "", fmt.Errorf("failed to write key to PEM: %w", err)
+	}
 	for _, cert := range certs {
 		if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}); err != nil {
-			return fmt.Errorf("failed to write cert to PEM: %w", err)
+			return "", fmt.Errorf("failed to write cert to PEM: %w", err)
 		}
 	}
 
-	// Flush files to ensure all data is written
-	if err := keyFile.Sync(); err != nil {
-		return fmt.Errorf("failed to sync key file: %w", err)
-	}
-	if err := certFile.Sync(); err != nil {
-		return fmt.Errorf("failed to sync cert file: %w", err)
-	}
+	keyFile.Sync()
+	certFile.Sync()
 
-	// Generate PKCS#12 file using OpenSSL
+	outputFileName := certFile.Name() + ".pfx"
 	cmd := exec.Command("openssl", "pkcs12", "-export", "-out", outputFileName, "-inkey", keyFile.Name(), "-in", certFile.Name(), "-passout", "pass:")
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("OpenSSL command failed: %w", err)
+		return "", fmt.Errorf("OpenSSL command failed: %w", err)
 	}
 
-	log.Println("PKCS#12 file created successfully:", outputFileName)
+	return outputFileName, nil
+}
+
+func uploadToAzureKeyVault(ctx context.Context, pfxFile, vaultName, certName string) error {
+	cred, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		return fmt.Errorf("failed to create credential: %v", err)
+	}
+
+	keyVaultURL := fmt.Sprintf("https://%s.vault.azure.net", vaultName) // build key vault uri
+
+	client, err := azcertificates.NewClient(keyVaultURL, cred, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create Key Vault client: %v", err)
+	}
+
+	pfxData, err := ioutil.ReadFile(pfxFile)
+	if err != nil {
+		return fmt.Errorf("failed to read PFX file: %v", err)
+	}
+	pfxBase64 := base64.StdEncoding.EncodeToString(pfxData)
+
+	// Create the certificate
+	params := azcertificates.ImportCertificateParameters{
+		Base64EncodedCertificate: &pfxBase64,
+	}
+
+	_, err = client.ImportCertificate(ctx, certName, params, nil)
+	if err != nil {
+		return fmt.Errorf("failed to import certificate: %v", err)
+	}
+
 	return nil
 }
 
@@ -176,18 +178,15 @@ func decodePEM(combinedPEM []byte) ([]*x509.Certificate, interface{}, error) {
 	return certs, key, nil
 }
 
-
-// SetupWithManager sets up the controller with the Manager.
 func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
-    r.Log = ctrl.Log.WithName("controllers").WithName("Secret")
+	r.Log = ctrl.Log.WithName("controllers").WithName("Secret")
 
-    // Define label selector
-    labelSelector := predicate.NewPredicateFuncs(func(obj client.Object) bool {
-        return obj.GetLabels()["pfxcreator"] == "true"
-    })
+	labelSelector := predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		return obj.GetLabels()["pfxcreator"] == "true"
+	})
 
-    return ctrl.NewControllerManagedBy(mgr).
-        For(&corev1.Secret{}).
-        WithEventFilter(labelSelector).
-        Complete(r)
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&corev1.Secret{}).
+		WithEventFilter(labelSelector).
+		Complete(r)
 }
