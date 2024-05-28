@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"io/ioutil"
@@ -129,8 +130,8 @@ func uploadToAzureKeyVault(ctx context.Context, pfxFile, vaultName, secretName s
 	if err != nil {
 		return fmt.Errorf("failed to read PFX file: %v", err)
 	}
-	// convert to string and put in secret without base64 encoding it first
-	secretData := string(pfxData)
+	// convert to string and put in secret base64 encoded
+	secretData := base64.StdEncoding.EncodeToString(pfxData)
 
 	// set secret in keyvault
 	_, err = client.SetSecret(ctx, secretName, azsecrets.SetSecretParameters{
