@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"io/ioutil"
@@ -12,7 +11,7 @@ import (
 	"os/exec"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
-	"github.com/Azure/azure-sdk-for-go/sdk/keyvault/azcertificates"
+	"github.com/Azure/azure-sdk-for-go/sdk/keyvault/azsecrets"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -58,7 +57,7 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if vaultName == "" {
 		vaultName = "default-key-vault-name" // fallback to some value if not set
 	}
-	certName := fmt.Sprintf("%s-apim", req.NamespacedName.Name) // set secret name as cert name
+	certName := fmt.Sprintf("%s-apim-001", req.NamespacedName.Name) // set secret name as cert name
 	if err := uploadToAzureKeyVault(ctx, pfxFile, vaultName, certName); err != nil {
 		log.Error(err, "Failed to upload certificate to Azure Key Vault")
 		return ctrl.Result{}, err
@@ -113,7 +112,7 @@ func createPKCS12(certs []*x509.Certificate, key interface{}) (string, error) {
 	return outputFileName, nil
 }
 
-func uploadToAzureKeyVault(ctx context.Context, pfxFile, vaultName, certName string) error {
+func uploadToAzureKeyVault(ctx context.Context, pfxFile, vaultName, secretName string) error {
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
 		return fmt.Errorf("failed to create credential: %v", err)
@@ -121,7 +120,7 @@ func uploadToAzureKeyVault(ctx context.Context, pfxFile, vaultName, certName str
 
 	keyVaultURL := fmt.Sprintf("https://%s.vault.azure.net", vaultName) // build key vault uri
 
-	client, err := azcertificates.NewClient(keyVaultURL, cred, nil)
+	client, err := azsecrets.NewClient(keyVaultURL, cred, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create Key Vault client: %v", err)
 	}
@@ -130,16 +129,15 @@ func uploadToAzureKeyVault(ctx context.Context, pfxFile, vaultName, certName str
 	if err != nil {
 		return fmt.Errorf("failed to read PFX file: %v", err)
 	}
-	pfxBase64 := base64.StdEncoding.EncodeToString(pfxData)
+	// convert to string and put in secret without base64 encoding it first
+	secretData := string(pfxData)
 
-	// Create the certificate
-	params := azcertificates.ImportCertificateParameters{
-		Base64EncodedCertificate: &pfxBase64,
-	}
-
-	_, err = client.ImportCertificate(ctx, certName, params, nil)
+	// set secret in keyvault
+	_, err = client.SetSecret(ctx, secretName, azsecrets.SetSecretParameters{
+		Value: &secretData,
+	}, nil)
 	if err != nil {
-		return fmt.Errorf("failed to import certificate: %v", err)
+		return fmt.Errorf("failed to import secret: %v", err)
 	}
 
 	return nil
