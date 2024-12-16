@@ -1,0 +1,35 @@
+name: Build and Push to GHCR
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Create build tag
+      id: short-sha
+      run: echo "::set-output name=sha5::$(echo ${{ github.sha }} | cut -c1-5)"
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v6
+      with:
+        push: true
+        tags: ghcr.io/${{ github.repository_owner }}/pfxcreator:${{ steps.short-sha.outputs.sha5 }}
+
+    - name: View the image in GHCR
+      run: echo "Navigate to 'https://github.com/users/${{ github.repository_owner }}/packages' to see your container."
