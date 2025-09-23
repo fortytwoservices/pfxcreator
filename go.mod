@@ -5,7 +5,7 @@ go 1.24.0
 toolchain go1.24.1
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.11.0
+	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.12.0
 	github.com/go-logr/logr v1.4.3
 	github.com/onsi/ginkgo/v2 v2.25.3
 	github.com/onsi/gomega v1.38.2
@@ -33,11 +33,11 @@ require (
 )
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.2 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.19.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.2 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/keyvault/azcertificates v0.9.0
 	github.com/Azure/azure-sdk-for-go/sdk/keyvault/internal v0.7.1 // indirect
-	github.com/AzureAD/microsoft-authentication-library-for-go v1.4.2 // indirect
+	github.com/AzureAD/microsoft-authentication-library-for-go v1.5.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
